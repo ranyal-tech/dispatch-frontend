@@ -1,12 +1,13 @@
 import api from "../api";
 import { useEffect, useState } from "react";
+import { useNotification } from "./NotificationProvider";
 
 export default function LiveDispatch({ ride, driverId }) {
+  const { showNotification, confirm } = useNotification();
   const TOTAL_TIME = 10;
 
   const [time, setTime] = useState(TOTAL_TIME);
   const [accepting, setAccepting] = useState(false);
-  const [alert, setAlert] = useState(null);
   const [fromAddr, setFromAddr] = useState(null);
   const [toAddr, setToAddr] = useState(null);
   
@@ -57,43 +58,35 @@ export default function LiveDispatch({ ride, driverId }) {
   const handleAccept = async () => {
     if (accepting) return;
     if (!driverId) {
-       setAlert({ type: 'error', text: "No active driver session found." });
+       showNotification("No active driver session found.", "error");
        return;
     }
 
     setAccepting(true);
-    setAlert(null);
+    // Removed local setAlert(null);
 
     try {
       // Simulate a driver accepting this ride
       const body = { driverId: driverId.trim() }; 
       await api.post(`/rides/${ride.id}/accept`, body);
-      setAlert({ type: "success", text: "Ride accepted successfully." });
+      showNotification("Ride accepted successfully.", "success");
     } catch (e) {
-      setAlert({
-        type: "error",
-        text: e?.response?.data?.message || "Failed to accept ride",
-      });
+      showNotification(e?.response?.data?.message || "Failed to accept ride", "error");
     } finally {
       setAccepting(false);
-      setTimeout(() => setAlert(null), 4000);
     }
   };
 
   // ❌ Cancel Ride
   const handleCancel = async () => {
-    if (!window.confirm("Cancel this ride?")) return;
+    const accepted = await confirm("Are you sure you want to cancel this ride?", null, "Cancel Ride");
+    if (!accepted) return;
 
     try {
       await api.post(`/rides/${ride.id}/cancel`);
-      setAlert({ type: "success", text: "Ride cancelled." });
+      showNotification("Ride cancelled.", "success");
     } catch (e) {
-      setAlert({
-        type: "error",
-        text: e?.response?.data?.message || "Cancel failed",
-      });
-    } finally {
-      setTimeout(() => setAlert(null), 4000);
+      showNotification(e?.response?.data?.message || "Cancel failed", "error");
     }
   };
 
@@ -232,18 +225,7 @@ export default function LiveDispatch({ ride, driverId }) {
         </div>
       </div>
 
-      {alert && (
-        <div
-          className={`mb-6 p-4 rounded-lg flex items-center gap-3 ${
-            alert.type === "success"
-              ? "bg-green-50 text-green-800 border-l-4 border-green-500"
-              : "bg-red-50 text-red-800 border-l-4 border-red-500"
-          }`}
-        >
-           {/* Icon logic for alert */}
-           {alert.text}
-        </div>
-      )}
+
 
       <div className="space-y-4 mb-8 relative z-10">
          <div className="flex items-start gap-3">

@@ -7,6 +7,7 @@ import {
   useMap,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import { useNotification } from "./NotificationProvider";
 
 function ClickHandler({ setPosition }) {
   useMapEvents({
@@ -27,6 +28,7 @@ function MapController({ position, zoom }) {
 }
 
 export default function LocationPicker({ initialPosition, onChange }) {
+  const { showNotification } = useNotification();
   // Default to center of India if not provided
   const INDIA_CENTER = [20.5937, 78.9629];
   const defaultPos = initialPosition || INDIA_CENTER;
@@ -78,7 +80,7 @@ export default function LocationPicker({ initialPosition, onChange }) {
 
   const useMyLocation = () => {
     if (!navigator.geolocation)
-      return alert("Geolocation not supported by your browser");
+      return showNotification("Geolocation not supported by your browser", "error");
     navigator.geolocation.getCurrentPosition(
       (p) => {
         const pos = [p.coords.latitude, p.coords.longitude];
@@ -89,7 +91,7 @@ export default function LocationPicker({ initialPosition, onChange }) {
         if (onChange) onChange(pos);
       },
       (err) => {
-        alert("Unable to retrieve your location: " + (err.message || err.code));
+        showNotification("Unable to retrieve your location: " + (err.message || err.code), "error");
       }
     );
   };

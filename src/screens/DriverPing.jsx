@@ -1,13 +1,30 @@
 import React, { useEffect, useState, useCallback } from "react";
 import api from "../api";
+import { useNotification } from "../components/NotificationProvider";
 
 export default function DriverPing({ ride, driverId, onDriverChange }) {
+  const { showNotification } = useNotification();
   const [drivers, setDrivers] = useState([]);
   const [selectedDriverId, setSelectedDriverId] = useState(driverId || "");
   const [loading, setLoading] = useState(true);
   const [pingedRides, setPingedRides] = useState([]);
   const [ridesLoading, setRidesLoading] = useState(false);
   const [actionInProgress, setActionInProgress] = useState(null);
+  const [addresses, setAddresses] = useState({});
+
+  const resolveAddress = async (lat, lon, key) => {
+    if (!lat || !lon || addresses[key]) return;
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      setAddresses(prev => ({ ...prev, [key]: data.display_name }));
+    } catch (e) {
+      console.error("Address resolution failed", e);
+    }
+  };
 
   // Sync with prop changes from parent
   useEffect(() => {
@@ -43,17 +60,30 @@ export default function DriverPing({ ride, driverId, onDriverChange }) {
       // Use the driver-specific rides API
       const res = await api.get(`/drivers/${selectedDriverId}/rides`);
       const driverRides = res.data?.data || res.data || [];
-      // Filter 
+      // Filter: Show requested/pinged rides OR those that were accepted
       const filtered = driverRides.filter(r => 
-        r.rideStatus === 'REQUESTED' || r.rideStatus === 'DRIVER_PINGED' && r.pinged === true
+        r.rideStatus === 'REQUESTED' || 
+        r.rideStatus === 'DRIVER_PINGED' || 
+        r.rideStatus === 'ACCEPTED'
       );
       setPingedRides(filtered);
+
+      // Resolve addresses
+      filtered.forEach(r => {
+        const pLat = r.pickup?.lat || r.pickupLat;
+        const pLng = r.pickup?.lng || r.pickupLng;
+        const dLat = (r.drop || r.destination)?.lat || r.dropLat;
+        const dLng = (r.drop || r.destination)?.lng || r.dropLng;
+        
+        if (pLat && pLng) resolveAddress(pLat, pLng, `p-${r.rideId}`);
+        if (dLat && dLng) resolveAddress(dLat, dLng, `d-${r.rideId}`);
+      });
     } catch (e) {
       console.error("Failed to fetch driver rides", e);
     } finally {
       setRidesLoading(false);
     }
-  }, [selectedDriverId]);
+  }, [selectedDriverId, addresses]);
 
   useEffect(() => {
     fetchPingedRides();
@@ -71,11 +101,12 @@ export default function DriverPing({ ride, driverId, onDriverChange }) {
   const handleAccept = async (rideId) => {
     setActionInProgress(rideId);
     try {
-      await api.post(`/rides/${rideId}/accept`);
+      await api.post(`/rides/${rideId}/accept/driver/${selectedDriverId}`);
+      showNotification("Ride accepted successfully!", "success");
       fetchPingedRides();
     } catch (e) {
       console.error("Failed to accept ride", e);
-      alert(e?.response?.data?.message || "Failed to accept ride");
+      showNotification(e?.response?.data?.message || "Failed to accept ride", "error");
     } finally {
       setActionInProgress(null);
     }
@@ -84,11 +115,12 @@ export default function DriverPing({ ride, driverId, onDriverChange }) {
   const handleReject = async (rideId) => {
     setActionInProgress(rideId);
     try {
-      await api.post(`/rides/${rideId}/cancel`);
+      await api.post(`/rides/${rideId}/cancel/driver/${selectedDriverId}`);
+      showNotification("Ride canceled successfully!", "success");
       fetchPingedRides();
     } catch (e) {
       console.error("Failed to cancel ride", e);
-      alert(e?.response?.data?.message || "Failed to cancel ride");
+      showNotification(e?.response?.data?.message || "Failed to cancel ride", "error");
     } finally {
       setActionInProgress(null);
     }
@@ -103,9 +135,10 @@ export default function DriverPing({ ride, driverId, onDriverChange }) {
       // Refresh drivers list
       const res = await api.get("/drivers");
       setDrivers(res.data?.data || res.data || []);
+      showNotification("Driver is now ONLINE", "success");
     } catch (e) {
       console.error("Failed to set driver online", e);
-      alert(e?.response?.data?.message || "Failed to set driver online");
+      showNotification(e?.response?.data?.message || "Failed to set driver online", "error");
     } finally {
       setStatusUpdating(null);
     }
@@ -118,9 +151,10 @@ export default function DriverPing({ ride, driverId, onDriverChange }) {
       // Refresh drivers list
       const res = await api.get("/drivers");
       setDrivers(res.data?.data || res.data || []);
+      showNotification("Driver is now OFFLINE", "warning");
     } catch (e) {
       console.error("Failed to set driver offline", e);
-      alert(e?.response?.data?.message || "Failed to set driver offline");
+      showNotification(e?.response?.data?.message || "Failed to set driver offline", "error");
     } finally {
       setStatusUpdating(null);
     }
@@ -155,53 +189,25 @@ export default function DriverPing({ ride, driverId, onDriverChange }) {
                 return (
                   <li 
                     key={id}
-                    className={`px-4 py-3 transition-colors ${
+                    onClick={() => handleDriverSelect(id)}
+                    className={`px-4 py-3 cursor-pointer transition-colors ${
                       isSelected 
                         ? 'bg-indigo-50 border-l-4 border-indigo-500' 
                         : 'hover:bg-gray-50 border-l-4 border-transparent'
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <div onClick={() => handleDriverSelect(id)} className="cursor-pointer flex-1">
+                      <div>
                         <div className={`text-sm font-medium ${isSelected ? 'text-indigo-700' : 'text-gray-700'}`}>
                           {d.name || id}
                         </div>
                         <div className="text-xs text-gray-400 font-mono">{id}</div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <div className={`flex items-center gap-1 text-xs font-medium ${
-                          isOnline ? 'text-green-600' : 'text-gray-400'
-                        }`}>
-                          <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-gray-300'}`}></span>
-                          {d.status || (isOnline ? 'Online' : 'Offline')}
-                        </div>
-                        {/* Status Toggle Buttons */}
-                        <div className="flex gap-1 ml-2">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleSetOnline(id); }}
-                            disabled={statusUpdating === id || isOnline}
-                            className={`px-2 py-1 text-xs rounded ${
-                              isOnline 
-                                ? 'bg-green-100 text-green-700 cursor-default' 
-                                : 'bg-gray-100 text-gray-600 hover:bg-green-100 hover:text-green-700'
-                            }`}
-                            title="Set Online"
-                          >
-                            {statusUpdating === id ? '...' : 'On'}
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleSetOffline(id); }}
-                            disabled={statusUpdating === id || !isOnline}
-                            className={`px-2 py-1 text-xs rounded ${
-                              !isOnline 
-                                ? 'bg-gray-200 text-gray-600 cursor-default' 
-                                : 'bg-gray-100 text-gray-600 hover:bg-red-100 hover:text-red-700'
-                            }`}
-                            title="Set Offline"
-                          >
-                            {statusUpdating === id ? '...' : 'Off'}
-                          </button>
-                        </div>
+                      <div className={`flex items-center gap-1.5 text-xs font-medium ${
+                        isOnline ? 'text-green-600' : 'text-gray-400'
+                      }`}>
+                        <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-gray-300'}`}></span>
+                        {d.status || (isOnline ? 'Online' : 'Offline')}
                       </div>
                     </div>
                   </li>
@@ -236,15 +242,18 @@ export default function DriverPing({ ride, driverId, onDriverChange }) {
         ) : (
           <div className="space-y-4">
             {pingedRides.map((r) => {
-              // Use expired flag from API response
-              const isExpired = r.expired === true;
+              // Only show EXPIRED UI if the ride is still in a pending state
+              const isExpiredUI = r.expired === true && (r.rideStatus === 'REQUESTED' || r.rideStatus === 'DRIVER_PINGED');
               const isProcessing = actionInProgress === r.rideId;
               
               return (
                 <div 
                   key={r.rideId} 
-                  className={`bg-white rounded-xl shadow-sm border p-5 ${
-                    isExpired ? 'border-red-200 bg-red-50' : 'border-gray-100'
+                  className={`bg-white rounded-xl shadow-sm border p-5 transition-colors ${
+                    isExpiredUI ? 'border-red-200 bg-red-50' : 
+                    r.rideStatus === 'ACCEPTED' ? 'border-green-200 bg-green-50' :
+                    r.rideStatus === 'CANCELLED' ? 'border-orange-200 bg-orange-50' :
+                    'border-gray-100'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-4">
@@ -255,7 +264,9 @@ export default function DriverPing({ ride, driverId, onDriverChange }) {
                           {r.rideId}
                         </span>
                         <span className={`text-xs font-semibold px-2 py-1 rounded ${
-                          isExpired ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+                          isExpiredUI ? 'bg-red-100 text-red-700' : 
+                          r.rideStatus === 'ACCEPTED' ? 'bg-green-100 text-green-700' :
+                          'bg-yellow-100 text-yellow-700'
                         }`}>
                           {r.rideStatus}
                         </span>
@@ -266,33 +277,59 @@ export default function DriverPing({ ride, driverId, onDriverChange }) {
                         )}
                       </div>
                       
-                      <div className="text-sm text-gray-600">
+                      <div className="text-sm text-gray-600 mb-4">
                         <span className="text-gray-400">Driver:</span> {r.driverId}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="flex items-start gap-2 text-xs">
+                          <div className="w-1.5 h-1.5 rounded-full bg-green-500 mt-1"></div>
+                          <div>
+                            <div className="text-gray-400 lowercase">Pickup:</div>
+                            <div className="font-semibold text-gray-800 break-words line-clamp-2">
+                              {addresses[`p-${r.rideId}`] || "Fetching address..."}
+                            </div>
+                            <div className="text-[10px] text-gray-400 font-mono">
+                              {(r.pickup?.lat || r.pickupLat)?.toFixed(4)}, {(r.pickup?.lng || r.pickupLng)?.toFixed(4)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-2 text-xs">
+                          <div className="w-1.5 h-1.5 rounded-full bg-red-500 mt-1"></div>
+                          <div>
+                            <div className="text-gray-400 lowercase">Drop:</div>
+                            <div className="font-semibold text-gray-800 break-words line-clamp-2">
+                              {addresses[`d-${r.rideId}`] || "Fetching address..."}
+                            </div>
+                            <div className="text-[10px] text-gray-400 font-mono">
+                              {((r.drop || r.destination)?.lat || r.dropLat)?.toFixed(4)}, {((r.drop || r.destination)?.lng || r.dropLng)?.toFixed(4)}
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
 
                     {/* Status & Actions */}
-                    <div className="flex flex-col items-center gap-3">
-                      {/* Expired Badge or Active Badge */}
-                      {isExpired ? (
-                        <div className="text-center px-4 py-2 rounded-lg bg-red-100 text-red-700">
-                          <div className="text-xs uppercase tracking-wider font-medium">Status</div>
-                          <div className="text-lg font-bold">EXPIRED</div>
+                    <div className="flex flex-col items-center gap-3 w-32">
+                      <div className={`text-center px-4 py-2 rounded-lg w-full ${
+                        isExpiredUI ? 'bg-red-100 text-red-700' : 
+                        r.rideStatus === 'ACCEPTED' ? 'bg-green-100 text-green-700' :
+                        r.rideStatus === 'CANCELLED' ? 'bg-orange-100 text-orange-700' :
+                        'bg-blue-100 text-blue-700'
+                      }`}>
+                        <div className="text-[10px] uppercase tracking-wider font-medium opacity-60">Status</div>
+                        <div className="text-sm font-bold truncate">
+                          {isExpiredUI ? 'EXPIRED' : r.rideStatus}
                         </div>
-                      ) : (
-                        <div className="text-center px-4 py-2 rounded-lg bg-green-100 text-green-700">
-                          <div className="text-xs uppercase tracking-wider font-medium">Status</div>
-                          <div className="text-lg font-bold">ACTIVE</div>
-                        </div>
-                      )}
+                      </div>
 
                       {/* Action Buttons */}
                       <div className="flex gap-2">
                         <button
                           onClick={() => handleAccept(r.rideId)}
-                          disabled={isExpired || isProcessing}
+                          disabled={isExpiredUI || isProcessing || r.rideStatus === 'ACCEPTED'}
                           className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
-                            isExpired || isProcessing
+                            isExpiredUI || isProcessing || r.rideStatus === 'ACCEPTED'
                               ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                               : 'bg-green-600 text-white hover:bg-green-700'
                           }`}
@@ -301,9 +338,9 @@ export default function DriverPing({ ride, driverId, onDriverChange }) {
                         </button>
                         <button
                           onClick={() => handleReject(r.rideId)}
-                          disabled={isExpired || isProcessing}
+                          disabled={isExpiredUI || isProcessing || r.rideStatus === 'ACCEPTED'}
                           className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
-                            isExpired || isProcessing
+                            isExpiredUI || isProcessing || r.rideStatus === 'ACCEPTED'
                               ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                               : 'bg-red-600 text-white hover:bg-red-700'
                           }`}

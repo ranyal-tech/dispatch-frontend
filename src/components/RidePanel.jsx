@@ -168,7 +168,7 @@ export default function RidePanel({ onCreate }) {
             <div className="space-y-4">
               <h3 className="text-sm font-medium text-gray-700 flex items-center gap-2">
                  <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                 Drop (Optional)
+                 Drop
               </h3>
                <div className="grid grid-cols-2 gap-4">
                 <div>

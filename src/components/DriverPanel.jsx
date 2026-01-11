@@ -1,27 +1,25 @@
 import api from "../api";
 import { useState, useEffect } from "react";
 import LocationPicker from "./LocationPicker";
+import { useNotification } from "./NotificationProvider";
 
 export default function DriverPanel() {
+  const { showNotification } = useNotification();
   const [id, setId] = useState("");
   const [generatedId, setGeneratedId] = useState(null);
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
   const [position, setPosition] = useState(null);
-  const [isOnline, setIsOnline] = useState(null);
-  const [toggling, setToggling] = useState(false);
   const [message, setMessage] = useState(null);
 
   useEffect(() => {
-    // reset known online state when driver id changes
-    setIsOnline(null);
+    // reset message when id changes
+    setMessage(null);
   }, [id]);
 
   const addDriver = async () => {
-    // For creation, we don't need ID check anymore as it is backend generated
-    // But we might want to ensure we don't double-add if ID is already set?
     if (id) {
-       setMessage({ type: "success", text: "Driver already added (ID: " + id + ")" });
+       showNotification("Driver already added", "warning");
        return;
     }
 
@@ -29,7 +27,6 @@ export default function DriverPanel() {
       ? { lat: +position[0], lng: +position[1] }
       : { lat: +lat, lng: +lng };
     try {
-      // 406 Fix: Ensure 'Accept' and 'Content-Type' are explicit
       const res = await api.post("/drivers", {
         location: {
           lat: location.lat,
@@ -42,107 +39,24 @@ export default function DriverPanel() {
         }
       });
       
-      // Adapt to wrapped response
-      // Structure: { success: true, message: "...", data: { id: "...", ... } }
       const responseData = res.data; 
-      const createdDriver = responseData.data || responseData; // Fallback for safety
+      const createdDriver = responseData.data || responseData;
       const driverId = createdDriver.id || createdDriver.driverId;
 
       if (driverId) {
-        setId(driverId); // Set the main ID state
-        setGeneratedId(driverId); // Show the ID to user
-        setMessage({ type: "success", text: `Driver added! ID: ${driverId}` });
+        setId(driverId);
+        setGeneratedId(driverId);
+        showNotification(`Driver successfully registered! ID: ${driverId}`, "success");
       } else {
-        setMessage({ type: "warning", text: "Driver added, but could not retrieve ID from response." });
+        showNotification("Driver added, but could not retrieve ID.", "warning");
       }
-      // Don't reset isOnline, leave as user choice
     } catch (e) {
       console.error("Add driver error:", e);
-      setMessage({
-        type: "error",
-        text: e?.response?.data?.message || e?.message || "Failed to add driver",
-      });
-      // Keeping error message persistent too, or long timeout
-      setTimeout(() => setMessage(null), 8000); 
+      showNotification(e?.response?.data?.message || e?.message || "Failed to add driver", "error");
     }
   };
 
-  const goOnline = async () => {
-    if (!id) return alert("Enter driver ID first");
-    try {
-      await api.patch(`/drivers/${id}/online`);
-      setIsOnline(true);
-    } catch (e) {
-      setMessage({
-        type: "error",
-        text: e?.response?.data?.message || "Failed to set online",
-      });
-      setTimeout(() => setMessage(null), 4500);
-    }
-  };
 
-  const goOffline = async () => {
-    if (!id) return alert("Enter driver ID first");
-    try {
-      await api.patch(`/drivers/${id}/offline`);
-      setIsOnline(false);
-    } catch (e) {
-      setMessage({
-        type: "error",
-        text: e?.response?.data?.message || "Failed to set offline",
-      });
-      setTimeout(() => setMessage(null), 4500);
-    }
-  };
-
-  const toggleOnline = async () => {
-    if (!id) return alert("Enter driver ID first");
-    // optimistic update: toggle UI immediately
-    const target = !isOnline;
-    setIsOnline(target);
-    setToggling(true);
-
-    try {
-      if (target) {
-        const res = await api.patch(`/drivers/${id}/online`);
-        console.log("toggleOnline response (online):", res);
-        setMessage({ type: "success", text: "Driver set online." });
-      } else {
-        const res = await api.patch(`/drivers/${id}/offline`);
-        console.log("toggleOnline response (offline):", res);
-        setMessage({ type: "success", text: "Driver set offline." });
-      }
-    } catch (e) {
-      // revert UI on failure
-      setIsOnline(!target);
-      console.error("toggleOnline error:", e);
-      setMessage({
-        type: "error",
-        text:
-          (e?.response &&
-            e.response.status + " " + JSON.stringify(e.response.data)) ||
-          e?.message ||
-          "Toggle failed",
-      });
-    } finally {
-      setToggling(false);
-      setTimeout(() => setMessage(null), 3500);
-    }
-  };
-
-  const fetchStatus = async () => {
-    if (!id) return alert("Enter driver ID first");
-    try {
-      const res = await api.get(`/drivers/${id}`);
-      const data = res.data || {};
-      // support different property names
-      setIsOnline(
-        Boolean(data.online ?? data.isOnline ?? data.status === "online")
-      );
-    } catch (e) {
-      alert(e?.response?.data?.message || "Failed to fetch driver status");
-    }
-  };
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -195,59 +109,27 @@ export default function DriverPanel() {
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <h3 className="text-sm font-medium text-gray-700">Manual Coordinates</h3>
-               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Latitude</label>
-                  <input
-                    value={lat}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                    placeholder="20.5937"
-                    onChange={(e) => setLat(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Longitude</label>
-                  <input
-                    value={lng}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                    placeholder="78.9629"
-                    onChange={(e) => setLng(e.target.value)}
-                  />
-                </div>
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium text-gray-700">Manual Coordinates</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Latitude</label>
+                <input
+                  value={lat}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                  placeholder="20.5937"
+                  onChange={(e) => setLat(e.target.value)}
+                />
               </div>
-            </div>
-
-            <div className="space-y-4 flex flex-col justify-end">
-               <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
-                  <div>
-                    <div className="text-sm font-medium text-gray-700">Driver Status</div>
-                    <div className="text-xs text-gray-500">{isOnline ? 'Driver is currently online' : 'Driver is offline'}</div>
-                  </div>
-                  
-                  <div className="flex items-center gap-3">
-                    <span className={`text-xs font-medium ${!isOnline ? 'text-gray-900' : 'text-gray-400'}`}>Offline</span>
-                    <button
-                      role="switch"
-                      aria-checked={!!isOnline}
-                      onClick={() => !toggling && toggleOnline()}
-                      disabled={!id}
-                      className={`relative w-12 h-7 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${
-                        !id ? 'opacity-50 cursor-not-allowed bg-gray-200' : 
-                        isOnline ? 'bg-indigo-600' : 'bg-gray-300'
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full shadow transform transition-transform ${
-                          isOnline ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
-                    <span className={`text-xs font-medium ${isOnline ? 'text-gray-900' : 'text-gray-400'}`}>Online</span>
-                  </div>
-               </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Longitude</label>
+                <input
+                  value={lng}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                  placeholder="78.9629"
+                  onChange={(e) => setLng(e.target.value)}
+                />
+              </div>
             </div>
           </div>
 

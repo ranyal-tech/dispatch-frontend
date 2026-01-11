@@ -8,6 +8,8 @@ import AddDriver from "./screens/AddDriver";
 import AddRide from "./screens/AddRide";
 import DriverPing from "./screens/DriverPing";
 import RideStatus from "./screens/RideStatus";
+import DriverManager from "./screens/DriverManager";
+import { NotificationProvider } from "./components/NotificationProvider";
 
 export default function App() {
   const [ride, setRide] = useState(null);
@@ -70,13 +72,16 @@ export default function App() {
         return <DriverPing ride={ride} driverId={currentDriverId} />;
       case "ride-status":
         return <RideStatus />;
+      case "driver-manager":
+        return <DriverManager />;
       default:
         return <Home onNavigate={setScreen} />;
     }
   };
 
   return (
-    <div className="min-h-screen">
+    <NotificationProvider>
+      <div className="min-h-screen">
       <div className="flex">
         {/* Sidebar */}
         <aside className="w-64 bg-slate-900 text-white min-h-screen flex flex-col shadow-xl fixed left-0 top-0 z-10">
@@ -113,6 +118,16 @@ export default function App() {
               }`}
             >
               Add Driver
+            </button>
+            <button
+              onClick={() => setScreen("driver-manager")}
+              className={`text-left px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                screen === "driver-manager"
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-900/20"
+                  : "text-slate-400 hover:bg-slate-800 hover:text-white"
+              }`}
+            >
+              Manage Drivers
             </button>
             <button
               onClick={() => setScreen("add-ride")}
@@ -189,5 +204,6 @@ export default function App() {
         </main>
       </div>
     </div>
+    </NotificationProvider>
   );
 }

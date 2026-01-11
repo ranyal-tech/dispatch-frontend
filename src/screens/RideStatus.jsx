@@ -1,24 +1,73 @@
 import React, { useEffect, useState } from "react";
 import api from "../api";
+import { useNotification } from "../components/NotificationProvider";
 
 export default function RideStatus() {
+  const { showNotification, confirm } = useNotification();
   const [rides, setRides] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [addresses, setAddresses] = useState({});
 
-  const fetchRides = async () => {
-    setLoading(true);
+  const resolveAddress = async (lat, lon, key) => {
+    if (!lat || !lon || addresses[key]) return;
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      setAddresses(prev => ({ ...prev, [key]: data.display_name }));
+    } catch (e) {
+      console.error("Address resolution failed", e);
+    }
+  };
+
+  const fetchRides = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     try {
         const res = await api.get("/rides");
         const list = res.data?.data || res.data || [];
         // Show most recent first
-        setRides(list.reverse());
+        setRides([...list].reverse());
+        
+        // Resolve addresses
+        list.forEach(r => {
+          const pLat = r.pickup?.lat || r.pickupLat;
+          const pLng = r.pickup?.lng || r.pickupLng;
+          const dLat = (r.drop || r.destination)?.lat || r.dropLat;
+          const dLng = (r.drop || r.destination)?.lng || r.dropLng;
+          
+          if (pLat && pLng) resolveAddress(pLat, pLng, `p-${r.id}`);
+          if (dLat && dLng) resolveAddress(dLat, dLng, `d-${r.id}`);
+        });
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
+    }
+  };
+
+  const handleCancel = async (rideId) => {
+    const accepted = await confirm("Are you sure you want to cancel this ride?", null, "Cancel Ride");
+    if (!accepted) return;
+    
+    try {
+      await api.post(`/rides/${rideId}/cancel`);
+      showNotification("Ride cancelled successfully", "success");
+      fetchRides(false);
+    } catch (e) {
+      console.error("Failed to cancel ride", e);
+      showNotification(e?.response?.data?.message || "Failed to cancel ride", "error");
     }
   };
 
   useEffect(() => {
     fetchRides();
+    
+    // Set up polling interval every 5 seconds
+    const interval = setInterval(() => {
+      fetchRides(false); // background fetch
+    }, 5000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const formatLoc = (loc) => {
@@ -70,18 +119,19 @@ export default function RideStatus() {
                 <th className="px-6 py-3 font-semibold">From (Pickup)</th>
                 <th className="px-6 py-3 font-semibold">To (Drop)</th>
                 <th className="px-6 py-3 font-semibold">Assigned Driver</th>
+                <th className="px-6 py-3 font-semibold text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading && rides.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan="6" className="px-6 py-8 text-center text-gray-500">
                     Loading ride data...
                   </td>
                 </tr>
               ) : rides.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="px-6 py-8 text-center text-gray-500 italic">
+                  <td colSpan="6" className="px-6 py-8 text-center text-gray-500 italic">
                     No rides found.
                   </td>
                 </tr>
@@ -95,15 +145,21 @@ export default function RideStatus() {
                       <StatusBadge status={r.status} />
                     </td>
                     <td className="px-6 py-4 text-gray-700">
-                      <div className="flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
-                        <span>{formatLoc(r.pickup)}</span>
+                      <div className="flex flex-col gap-0.5 max-w-xs">
+                        <div className="flex items-center gap-2">
+                          <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                          <span className="font-medium truncate">{addresses[`p-${r.id}`] || "Fetching..."}</span>
+                        </div>
+                        <span className="text-[10px] text-gray-400 font-mono ml-3.5">{formatLoc(r.pickup)}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 text-gray-700">
-                      <div className="flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>
-                         <span>{formatLoc(r.drop || r.destination)}</span>
+                      <div className="flex flex-col gap-0.5 max-w-xs">
+                        <div className="flex items-center gap-2">
+                          <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>
+                          <span className="font-medium truncate">{addresses[`d-${r.id}`] || "Fetching..."}</span>
+                        </div>
+                        <span className="text-[10px] text-gray-400 font-mono ml-3.5">{formatLoc(r.drop || r.destination)}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -115,6 +171,19 @@ export default function RideStatus() {
                        ) : (
                          <span className="text-gray-400 italic">Unassigned</span>
                        )}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <button
+                        onClick={() => handleCancel(r.id)}
+                        disabled={r.status?.toUpperCase() === 'COMPLETED' || r.status?.toUpperCase() === 'CANCELLED'}
+                        className={`px-3 py-1 rounded text-xs font-bold transition-colors ${
+                          r.status?.toUpperCase() === 'COMPLETED' || r.status?.toUpperCase() === 'CANCELLED'
+                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                            : 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-100'
+                        }`}
+                      >
+                        Cancel
+                      </button>
                     </td>
                   </tr>
                 ))
